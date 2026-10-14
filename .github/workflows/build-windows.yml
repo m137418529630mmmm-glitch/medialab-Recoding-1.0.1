@@ -1,0 +1,89 @@
+
+name: Build medialab Recoding for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build Windows x64 EXE
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Locate project package.json
+        id: project
+        shell: pwsh
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+
+          $package = Get-ChildItem -Path $root -Filter package.json -File -Recurse |
+            Where-Object {
+              $_.FullName -notmatch '[\\/](node_modules|\.git)[\\/]'
+            } |
+            Select-Object -First 1
+
+          if (-not $package) {
+            Write-Host "Repository root contents:"
+            Get-ChildItem -Path $root -Force | Select-Object Name, Mode
+            Write-Error "package.json was not found. Upload the complete project source."
+            exit 1
+          }
+
+          $projectDir = $package.Directory.FullName
+          "project_dir=$projectDir" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          Write-Host "Project directory: $projectDir"
+
+      - name: Install dependencies
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        run: npm install
+
+      - name: Build Windows application
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        run: npm run dist
+
+      - name: Find generated EXE
+        id: artifact
+        shell: pwsh
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        run: |
+          $exe = Get-ChildItem -Path . -Filter "*.exe" -File -Recurse |
+            Where-Object {
+              $_.FullName -notmatch '[\\/](node_modules|\.git)[\\/]'
+            } |
+            Select-Object -First 1
+
+          if (-not $exe) {
+            Write-Error "No EXE was generated."
+            exit 1
+          }
+
+          "exe_path=$($exe.FullName)" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          Write-Host "Generated: $($exe.FullName)"
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: medialab-Recoding-Windows-x64
+          path: ${{ steps.artifact.outputs.exe_path }}
+          if-no-files-found: error
+          retention-days: 14
